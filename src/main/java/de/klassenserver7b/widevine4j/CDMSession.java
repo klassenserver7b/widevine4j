@@ -43,204 +43,184 @@ import de.klassenserver7b.widevine4j.protobuf.ProtocolVersion;
 import de.klassenserver7b.widevine4j.protobuf.SignedDrmCertificate;
 import de.klassenserver7b.widevine4j.protobuf.SignedMessage;
 
+
 public class CDMSession {
-	public static final byte[] CERTIFICATE_REQUEST = { 0x08, 0x04 };
+    public static final byte[] CERTIFICATE_REQUEST = {0x08, 0x04};
 
-	private final byte[] sessionId;
-	private final CDMDevice device;
-	private byte[] licenseRequest;
+    private final byte[] sessionId;
+    private final CDMDevice device;
+    private byte[] licenseRequest;
 
-	private final byte[] initData;
-	private DrmCertificate certificate;
+    private final byte[] initData;
+    private DrmCertificate certificate;
 
-	private byte[] derivedAuthKey;
-	private byte[] derivedEncKey;
+    private byte[] derivedAuthKey;
+    private byte[] derivedEncKey;
 
-	public CDMSession(CDMDevice device, byte[] pssh) {
-		this.device = device;
+    public CDMSession(CDMDevice device, byte[] pssh) {
+        this.device = device;
 
-		byte[] psshData = PSSH.getData(pssh);
+        byte[] psshData = PSSH.getData(pssh);
 
-		if (psshData != null)
-			initData = psshData;
-		else
-			initData = pssh;
+        if (psshData != null)
+            initData = psshData;
+        else
+            initData = pssh;
 
-		if (!device.isAndroid()) {
-			sessionId = new byte[16];
-			new Random().nextBytes(sessionId);
-		} else {
-			Random rng = new Random();
-			sessionId = String.format("%08X%08X0100000000000000", rng.nextInt(), rng.nextInt())
-					.getBytes(StandardCharsets.US_ASCII);
-		}
-	}
+        if (!device.isAndroid()) {
+            sessionId = new byte[16];
+            new Random().nextBytes(sessionId);
+        } else {
+            Random rng = new Random();
+            sessionId = String.format("%08X%08X0100000000000000", rng.nextInt(), rng.nextInt())
+                    .getBytes(StandardCharsets.US_ASCII);
+        }
+    }
 
-	public void updateCertificate(byte[] cert) throws IllegalStateException {
-		try {
-			SignedMessage msg = SignedMessage.parseFrom(cert);
-			SignedDrmCertificate signedDeviceCertificate = SignedDrmCertificate.parseFrom(msg.getMsg());
-			certificate = DrmCertificate.parseFrom(signedDeviceCertificate.getDrmCertificate());
-		} catch (InvalidProtocolBufferException ignored) {
-			try {
-				certificate = DrmCertificate.parseFrom(cert);
-			} catch (InvalidProtocolBufferException e) {
-				throw new IllegalStateException("Can't parse certificate", new Throwable().fillInStackTrace());
-			}
-		}
-	}
+    public void updateCertificate(byte[] cert) throws InvalidProtocolBufferException {
+        try {
+            SignedMessage msg = SignedMessage.parseFrom(cert);
+            SignedDrmCertificate signedDeviceCertificate = SignedDrmCertificate.parseFrom(msg.getMsg());
+            certificate = DrmCertificate.parseFrom(signedDeviceCertificate.getDrmCertificate());
+        } catch (InvalidProtocolBufferException ignored) {
+            certificate = DrmCertificate.parseFrom(cert);
+        }
+    }
 
-	public byte[] getLicenseRequest(boolean privacyMode) throws IllegalStateException {
-		LicenseRequest.Builder requestBuilder = LicenseRequest.newBuilder().setType(LicenseRequest.RequestType.NEW)
-				.setKeyControlNonce(new Random().nextInt()).setProtocolVersion(ProtocolVersion.VERSION_2_1)
-				.setRequestTime(OffsetDateTime.now().toEpochSecond())
-				.setContentId(LicenseRequest.ContentIdentification.newBuilder()
-						.setWidevinePsshData(LicenseRequest.ContentIdentification.WidevinePsshData.newBuilder()
-								.addPsshData(ByteString.copyFrom(initData)).setLicenseType(LicenseType.AUTOMATIC)
-								.setRequestId(ByteString.copyFrom(sessionId))));
+    public byte[] getLicenseRequest(boolean privacyMode) throws CryptoException {
+        LicenseRequest.Builder requestBuilder = LicenseRequest.newBuilder()
+                .setType(LicenseRequest.RequestType.NEW)
+                .setKeyControlNonce(new Random().nextInt())
+                .setProtocolVersion(ProtocolVersion.VERSION_2_1)
+                .setRequestTime(OffsetDateTime.now().toEpochSecond())
+                .setContentId(LicenseRequest.ContentIdentification.newBuilder()
+                        .setWidevinePsshData(LicenseRequest.ContentIdentification.WidevinePsshData.newBuilder()
+                                .addPsshData(ByteString.copyFrom(initData))
+                                .setLicenseType(LicenseType.AUTOMATIC)
+                                .setRequestId(ByteString.copyFrom(sessionId))));
 
-		if (!privacyMode)
-			requestBuilder.setClientId(device.getClientId());
-		else {
-			try {
-				EncryptedClientIdentification.Builder encryptedClientId = EncryptedClientIdentification.newBuilder();
+        if (!privacyMode)
+            requestBuilder.setClientId(device.getClientId());
+        else {
+            try {
+                EncryptedClientIdentification.Builder encryptedClientId = EncryptedClientIdentification.newBuilder();
 
-				byte[] paddedClientId = /* Padding.addPKCS7Padding( */device.getClientId().toByteArray()/* , 16) */;
+                byte[] paddedClientId = /*Padding.addPKCS7Padding(*/device.getClientId().toByteArray()/*, 16)*/;
 
-				KeyGenerator keyGenerator = KeyGenerator.getInstance("AES", new BouncyCastleProvider());
-				keyGenerator.init(128);
-				SecretKey secretKey = keyGenerator.generateKey();
+                KeyGenerator keyGenerator = KeyGenerator.getInstance("AES", new BouncyCastleProvider());
+                keyGenerator.init(128);
+                SecretKey secretKey = keyGenerator.generateKey();
 
-				SecureRandom secureRandom = new SecureRandom();
-				byte[] iv = new byte[16];
-				secureRandom.nextBytes(iv);
-				IvParameterSpec ivSpec = new IvParameterSpec(iv);
+                SecureRandom secureRandom = new SecureRandom();
+                byte[] iv = new byte[16];
+                secureRandom.nextBytes(iv);
+                IvParameterSpec ivSpec = new IvParameterSpec(iv);
 
-				Cipher cipher = Cipher.getInstance("AES/CBC/PKCS7Padding", new BouncyCastleProvider());
-				cipher.init(Cipher.ENCRYPT_MODE, secretKey, ivSpec);
+                Cipher cipher = Cipher.getInstance("AES/CBC/PKCS7Padding", new BouncyCastleProvider());
+                cipher.init(Cipher.ENCRYPT_MODE, secretKey, ivSpec);
 
-				encryptedClientId.setEncryptedClientId(ByteString.copyFrom(cipher.doFinal(paddedClientId)));
+                encryptedClientId.setEncryptedClientId(ByteString.copyFrom(cipher.doFinal(paddedClientId)));
 
-				try (ASN1InputStream asn1InputStream = new ASN1InputStream(certificate.getPublicKey().newInput())) {
-					RSAPublicKey rsaPublicKey = RSAPublicKey.getInstance(asn1InputStream.readObject());
-					KeyFactory keyFactory = KeyFactory.getInstance("RSA", new BouncyCastleProvider());
-					RSAPublicKeySpec publicKeySpec = new RSAPublicKeySpec(rsaPublicKey.getModulus(),
-							rsaPublicKey.getPublicExponent());
-					PublicKey key = keyFactory.generatePublic(publicKeySpec);
+                try (ASN1InputStream asn1InputStream = new ASN1InputStream(certificate.getPublicKey().newInput())) {
+                    RSAPublicKey rsaPublicKey = RSAPublicKey.getInstance(asn1InputStream.readObject());
+                    KeyFactory keyFactory = KeyFactory.getInstance("RSA", new BouncyCastleProvider());
+                    RSAPublicKeySpec publicKeySpec = new RSAPublicKeySpec(rsaPublicKey.getModulus(), rsaPublicKey.getPublicExponent());
+                    PublicKey key = keyFactory.generatePublic(publicKeySpec);
 
-					Cipher rsaCipher = Cipher.getInstance("RSA/NONE/OAEPWithSHA1AndMGF1Padding",
-							new BouncyCastleProvider());
-					rsaCipher.init(Cipher.ENCRYPT_MODE, key);
+                    Cipher rsaCipher = Cipher.getInstance("RSA/NONE/OAEPWithSHA1AndMGF1Padding", new BouncyCastleProvider());
+                    rsaCipher.init(Cipher.ENCRYPT_MODE, key);
 
-					encryptedClientId
-							.setEncryptedPrivacyKey(ByteString.copyFrom(rsaCipher.doFinal(secretKey.getEncoded())));
-					encryptedClientId.setEncryptedClientIdIv(ByteString.copyFrom(iv));
-					encryptedClientId.setProviderIdBytes(certificate.getProviderIdBytes());
-					encryptedClientId.setServiceCertificateSerialNumber(certificate.getSerialNumber());
-				} catch (IOException | InvalidKeySpecException e) {
-					e.printStackTrace();
-					return null;
-				}
+                    encryptedClientId.setEncryptedPrivacyKey(ByteString.copyFrom(rsaCipher.doFinal(secretKey.getEncoded())));
+                    encryptedClientId.setEncryptedClientIdIv(ByteString.copyFrom(iv));
+                    encryptedClientId.setProviderIdBytes(certificate.getProviderIdBytes());
+                    encryptedClientId.setServiceCertificateSerialNumber(certificate.getSerialNumber());
+                } catch (IOException | InvalidKeySpecException e) {
+                    e.printStackTrace();
+                    return null;
+                }
 
-				requestBuilder.setEncryptedClientId(encryptedClientId);
-			} catch (NoSuchAlgorithmException | InvalidAlgorithmParameterException | NoSuchPaddingException
-					| IllegalBlockSizeException | BadPaddingException | InvalidKeyException e) {
-				e.printStackTrace();
-				return null;
-			}
-		}
+                requestBuilder.setEncryptedClientId(encryptedClientId);
+            } catch (NoSuchAlgorithmException | InvalidAlgorithmParameterException | NoSuchPaddingException |
+                     IllegalBlockSizeException | BadPaddingException | InvalidKeyException e) {
+                e.printStackTrace();
+                return null;
+            }
+        }
 
-		licenseRequest = requestBuilder.build().toByteArray();
+        licenseRequest = requestBuilder.build().toByteArray();
 
-		SignedMessage signed;
-		try {
-			signed = SignedMessage.newBuilder().setMsg(ByteString.copyFrom(licenseRequest))
-					.setSignature(ByteString.copyFrom(device.sign(licenseRequest))).build();
-			return signed.toByteArray();
-		} catch (CryptoException e) {
-			throw new IllegalStateException(e);
-		}
-	}
+        SignedMessage signed = SignedMessage.newBuilder()
+                .setMsg(ByteString.copyFrom(licenseRequest))
+                .setSignature(ByteString.copyFrom(device.sign(licenseRequest)))
+                .build();
 
-	public List<ContentKey> decodeLicense(byte[] license) throws IllegalStateException {
-		if (licenseRequest == null)
-			throw new IllegalArgumentException("license cannot be null");
+        return signed.toByteArray();
+    }
 
-		SignedMessage signedMessage;
-		try {
-			signedMessage = SignedMessage.parseFrom(license);
-		} catch (InvalidProtocolBufferException e) {
-			throw new IllegalStateException(e);
-		}
+    public List<ContentKey> decodeLicense(byte[] license) throws InvalidProtocolBufferException, InvalidCipherTextException {
+        if (licenseRequest == null)
+            throw new IllegalArgumentException("license cannot be null");
 
-		byte[] sessionKey;
-		try {
-			sessionKey = device.decrypt(signedMessage.getSessionKey().toByteArray());
-		} catch (InvalidCipherTextException e) {
-			throw new IllegalStateException(e);
-		}
-		if (sessionKey.length != 16)
-			throw new IllegalStateException("session key couldn't be decrypted");
+        SignedMessage signedMessage = SignedMessage.parseFrom(license);
 
-		deriveKeys(licenseRequest, sessionKey);
+        byte[] sessionKey = device.decrypt(signedMessage.getSessionKey().toByteArray());
+        if (sessionKey.length != 16)
+            throw new IllegalStateException("session key couldn't be decrypted");
 
-		byte[] licenseMsgBytes = signedMessage.getMsg().toByteArray();
-		License licenseMsg;
-		try {
-			licenseMsg = License.parseFrom(licenseMsgBytes);
-		} catch (InvalidProtocolBufferException e) {
-			throw new IllegalStateException(e);
-		}
+        deriveKeys(licenseRequest, sessionKey);
 
-		byte[] licenseMsgHmac = CryptoUtils.getHmacSHA256(licenseMsgBytes, derivedAuthKey);
-		if (!Arrays.equals(licenseMsgHmac, signedMessage.getSignature().toByteArray()))
-			throw new IllegalStateException("license signature mismatch");
+        byte[] licenseMsgBytes = signedMessage.getMsg().toByteArray();
+        License licenseMsg = License.parseFrom(licenseMsgBytes);
 
-		ArrayList<ContentKey> decryptedKeys = new ArrayList<>();
+        byte[] licenseMsgHmac = CryptoUtils.getHmacSHA256(licenseMsgBytes, derivedAuthKey);
+        if (!Arrays.equals(licenseMsgHmac, signedMessage.getSignature().toByteArray()))
+            throw new IllegalStateException("license signature mismatch");
 
-		for (License.KeyContainer keyContainer : licenseMsg.getKeyList()) {
-			if (keyContainer.getType() == License.KeyContainer.KeyType.CONTENT) {
-				try {
-					SecretKeySpec secretKeySpec = new SecretKeySpec(derivedEncKey, "AES");
-					IvParameterSpec ivSpec = new IvParameterSpec(keyContainer.getIv().toByteArray());
+        ArrayList<ContentKey> decryptedKeys = new ArrayList<>();
 
-					Cipher cipher = Cipher.getInstance("AES/CBC/PKCS7Padding", new BouncyCastleProvider());
-					cipher.init(Cipher.DECRYPT_MODE, secretKeySpec, ivSpec);
+        for (License.KeyContainer keyContainer : licenseMsg.getKeyList()) {
+            if (keyContainer.getType() == License.KeyContainer.KeyType.CONTENT) {
+                try {
+                    SecretKeySpec secretKeySpec = new SecretKeySpec(derivedEncKey, "AES");
+                    IvParameterSpec ivSpec = new IvParameterSpec(keyContainer.getIv().toByteArray());
 
-					byte[] kid = keyContainer.getId().toByteArray();
-					byte[] decryptedKey = cipher.doFinal(keyContainer.getKey().toByteArray());
+                    Cipher cipher = Cipher.getInstance("AES/CBC/PKCS7Padding", new BouncyCastleProvider());
+                    cipher.init(Cipher.DECRYPT_MODE, secretKeySpec, ivSpec);
 
-					decryptedKeys.add(new ContentKey(kid, decryptedKey));
+                    byte[] kid = keyContainer.getId().toByteArray();
+                    byte[] decryptedKey = cipher.doFinal(keyContainer.getKey().toByteArray());
 
-				} catch (NoSuchAlgorithmException | NoSuchPaddingException | InvalidAlgorithmParameterException
-						| InvalidKeyException | BadPaddingException | IllegalBlockSizeException e) {
-					e.printStackTrace();
-				}
-			}
-		}
+                    decryptedKeys.add(new ContentKey(kid, decryptedKey));
 
-		return decryptedKeys;
-	}
+                } catch (NoSuchAlgorithmException | NoSuchPaddingException | InvalidAlgorithmParameterException |
+                         InvalidKeyException | BadPaddingException | IllegalBlockSizeException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
 
-	private void deriveKeys(byte[] licenseRequest, byte[] sessionKey) {
-		byte[] encKey = new byte[16 + licenseRequest.length];
-		System.arraycopy("\u0001ENCRYPTION\u0000".getBytes(StandardCharsets.UTF_8), 0, encKey, 0, 11);
-		System.arraycopy(licenseRequest, 0, encKey, 12, licenseRequest.length);
-		System.arraycopy(new byte[] { 0, 0, 0, (byte) 0x80 }, 0, encKey, 12 + licenseRequest.length, 4);
+        return decryptedKeys;
+    }
 
-		byte[] authKey = new byte[20 + licenseRequest.length];
-		System.arraycopy("\u0001AUTHENTICATION\u0000".getBytes(StandardCharsets.UTF_8), 0, authKey, 0, 15);
-		System.arraycopy(licenseRequest, 0, authKey, 16, licenseRequest.length);
-		System.arraycopy(new byte[] { 0, 0, 2, 0 }, 0, authKey, 16 + licenseRequest.length, 4);
+    private void deriveKeys(byte[] licenseRequest, byte[] sessionKey) {
+        byte[] encKey = new byte[16 + licenseRequest.length];
+        System.arraycopy("\u0001ENCRYPTION\u0000".getBytes(StandardCharsets.UTF_8), 0, encKey, 0, 11);
+        System.arraycopy(licenseRequest, 0, encKey, 12, licenseRequest.length);
+        System.arraycopy(new byte[]{0, 0, 0, (byte) 0x80}, 0, encKey, 12 + licenseRequest.length, 4);
 
-		derivedEncKey = CryptoUtils.getCmacAES(encKey, sessionKey);
+        byte[] authKey = new byte[20 + licenseRequest.length];
+        System.arraycopy("\u0001AUTHENTICATION\u0000".getBytes(StandardCharsets.UTF_8), 0, authKey, 0, 15);
+        System.arraycopy(licenseRequest, 0, authKey, 16, licenseRequest.length);
+        System.arraycopy(new byte[]{0, 0, 2, 0}, 0, authKey, 16 + licenseRequest.length, 4);
 
-		byte[] authCmacKey1 = CryptoUtils.getCmacAES(authKey, sessionKey);
-		authKey[0] = 2;
-		byte[] authCmacKey2 = CryptoUtils.getCmacAES(authKey, sessionKey);
+        derivedEncKey = CryptoUtils.getCmacAES(encKey, sessionKey);
 
-		derivedAuthKey = new byte[authCmacKey1.length + authCmacKey2.length];
-		System.arraycopy(authCmacKey1, 0, derivedAuthKey, 0, authCmacKey1.length);
-		System.arraycopy(authCmacKey2, 0, derivedAuthKey, authCmacKey1.length, authCmacKey2.length);
-	}
+        byte[] authCmacKey1 = CryptoUtils.getCmacAES(authKey, sessionKey);
+        authKey[0] = 2;
+        byte[] authCmacKey2 = CryptoUtils.getCmacAES(authKey, sessionKey);
+
+        derivedAuthKey = new byte[authCmacKey1.length + authCmacKey2.length];
+        System.arraycopy(authCmacKey1, 0, derivedAuthKey, 0, authCmacKey1.length);
+        System.arraycopy(authCmacKey2, 0, derivedAuthKey, authCmacKey1.length, authCmacKey2.length);
+    }
 }
