@@ -13,6 +13,8 @@
 	<description>A widevine4j implementation for java</description>
 	<url>https://github.com/klassenserver7b/widevine4j</url>
 
+	<packaging>jar</packaging>
+
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<maven.compiler.source>17</maven.compiler.source>
